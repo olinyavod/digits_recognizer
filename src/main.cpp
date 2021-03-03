@@ -1,9 +1,11 @@
 ﻿#include <SDL.h>
 
+#include "../include/neural_network.hpp"
+
 const int WINDOW_WIDTH = 1024;
 const int WINDOW_HEIGHT = 768;
-const int PICTURE_WIDTH = 48;
-const int PICTURE_HEIGHT = 48;
+const int PICTURE_WIDTH = 28;
+const int PICTURE_HEIGHT = 28;
 
 SDL_Renderer* renderer = nullptr;
 SDL_Window* window = nullptr;
@@ -13,9 +15,6 @@ bool is_move = false , is_clear = false, is_pressed = false;
 
 void on_loop(long current_tick)
 {
-	if(!is_move)
-		return;
-
 	
 }
 
@@ -58,7 +57,7 @@ bool on_event(SDL_Event event)
 		{
 		case SDLK_ESCAPE:
 			return true;
-		case SDLK_c:
+		case SDLK_SPACE:
 			is_clear = true;
 			break;
 		}
