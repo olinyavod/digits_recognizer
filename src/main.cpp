@@ -2,8 +2,8 @@
 
 #include "../include/neural_network.hpp"
 
-const int WINDOW_WIDTH = 1024;
-const int WINDOW_HEIGHT = 768;
+const int WINDOW_WIDTH = 640;
+const int WINDOW_HEIGHT = 480;
 const int PICTURE_WIDTH = 28;
 const int PICTURE_HEIGHT = 28;
 
