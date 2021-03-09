@@ -1,4 +1,6 @@
-﻿#include <SDL.h>
+﻿#include <fstream>
+#include <future>
+#include <SDL.h>
 
 #include "../include/neural_network.hpp"
 
@@ -119,13 +121,46 @@ bool init()
 	return true;
 }
 
+double sigmoid(double x)
+{
+	return 1 / (1 + std::exp(-x));
+}
+
+double dsigmoid(double y)
+{
+	return y * (1 - y);
+}
+
+nn::neural_network* create_digits_nn()
+{
+	auto* nn = new nn::neural_network(0.001,
+		&sigmoid,
+		&dsigmoid,
+		{ 784, 512, 128, 32, 10 });
+
+	const char* model_file = "nn_model.dat";
+
+	std::ofstream os(model_file, std::ios::binary);
+	nn->save(os);
+	os.close();
+
+	delete nn;
+
+	std::ifstream is(model_file, std::ios::binary);
+
+	return nn::neural_network::load(is, &sigmoid, &dsigmoid);
+}
+
 int main(int argc, char* argv[])
 {
+	auto learn_task = std::async(std::launch::async, create_digits_nn);
+	
 	if (!init())
 		return 1;
-
+	
 	auto quit = false;
 	long current_tick = 0;
+	nn::neural_network* nn = nullptr;
 	while(!quit)
 	{
 		pt_picture_start = pt_picture_end;
@@ -148,9 +183,14 @@ int main(int argc, char* argv[])
 
 		current_tick = SDL_GetTicks();
 
+		if (nn == nullptr && learn_task._Is_ready())
+			nn = learn_task.get();
+		
 		on_loop(current_tick);
 		on_render();
 	}
+
+	delete nn;
 	
 	SDL_DestroyRenderer(renderer);
 	SDL_DestroyWindow(window);

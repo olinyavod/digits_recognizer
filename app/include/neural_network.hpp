@@ -1,7 +1,6 @@
 #pragma once
 #include <functional>
 #include <istream>
-#include <list>
 #include <ostream>
 #include <vector>
 
@@ -11,20 +10,24 @@ namespace nn {
 	auto read(std::istream& is, T* value)
 	{
 		const auto pos = is.tellg();
-		is.read(reinterpret_cast<char*>(value), sizeof(*value));
-		return static_cast<std::size_t>(is.tellg() - pos);
+		T v = {};
+
+		is.read(reinterpret_cast<char*>(&v), sizeof(v));
+		
+		*value = v;
+		return  static_cast<std::size_t>(is.tellg() - pos);
 	}
 
 	template<typename T>
 	auto read(std::istream& is, T*& data, size_t* count)
 	{
-		std::uint32_t size;
+		std::uint32_t size = 0;
 		auto pos = read(is, &size);
 		*count = size;
 
 		data = new T[size];
 
-		for (auto i = 0U; i < size; i++)
+		for (auto i = 0U; i < size; ++i)
 		{
 			T value = {};
 			pos += read(is, &value);
@@ -37,22 +40,20 @@ namespace nn {
 	template<typename T>
 	auto write(std::ostream& os, T value) -> std::size_t
 	{
-		const size_t pos = os.tellp();
+		const auto pos = os.tellp();
 		os.write(reinterpret_cast<const char*>(&value), sizeof(value));
-		return static_cast<std::size_t>(os.tellp()) - pos;
+		return static_cast<std::size_t>(os.tellp() - pos);
 	}
 
 	template<typename T>
 	auto write(std::ostream& os, const T* const data, std::size_t size) -> std::size_t
 	{
-		const auto pos = os.tellp();
-		const auto len = static_cast<std::uint32_t>(size);
-		os.write(reinterpret_cast<const char*>(&len), sizeof(len));
-
+		auto len = write(os, static_cast<std::uint32_t>(size));
+		
 		for (auto i = 0U; i < size; i++)
-			write(os, data[i]);
+			len += write(os, data[i]);
 			
-		return static_cast<std::size_t>(os.tellp() - pos);
+		return len;
 	}
 	
 	class layer
@@ -81,7 +82,7 @@ namespace nn {
 		{
 			neurons = new double[size];
 			biases = new double[size];
-			weights_ = new double[size * next_size];
+			weights_ = new double[next_size * size];
 		}
 
 		double get_weight(const int x, const int y) const
@@ -103,22 +104,24 @@ namespace nn {
 
 		auto save(std::ostream& os) const
 		{
-			auto len = write(os, size);
-			len += write(os, next_size_);
+			std::size_t len = 0;
+			
+			len += write(os, static_cast<std::int32_t>(size));
+			len += write(os, static_cast<std::int32_t>(next_size_));
 
 			len += write(os, biases, size);
 			len += write(os, neurons, size);
-			len += write(os, weights_, size * next_size_);
+			len += write(os, weights_, next_size_ * size);
 			
 			return len;			
 		}
 
 		static layer* load(std::istream& is)
 		{
-			int size = 0;
+			std::int32_t size = 0;
 			read(is, &size);
 
-			int next_size = 0;
+			std::int32_t next_size = 0;
 			read(is, &next_size);
 
 			double* biases;
@@ -143,22 +146,22 @@ namespace nn {
 	{		
 	private:
 		double learning_ratio_;
-		std::vector<layer*> layers_;
+		std::vector<layer*>* layers_;
 		unary_operator activation_;
 		unary_operator derivative_;
-
+			
 		static double get_random()
 		{
 			return  (static_cast<double>(rand()) / RAND_MAX) * 2.0 - 1.0;
 		}
-
+	
 		neural_network(const double learning_ratio,
 			const unary_operator activation,
 			const unary_operator derivative,
 			const std::vector<layer*>& layers)
 			: learning_ratio_(learning_ratio), activation_(activation), derivative_(derivative)
 		{
-			layers_ = { layers };
+			layers_ = new std::vector<layer*>(layers);
 		}
 
 	public:
@@ -168,6 +171,8 @@ namespace nn {
 		               const std::vector<int>& sizes)
 			: learning_ratio_(learning_ratio), activation_(activation), derivative_(derivative)
 		{
+			layers_ = new std::vector<layer*>();
+			
 			for (size_t i = 0; i < sizes.size(); i++)
 			{
 				int next_size = 0;
@@ -176,7 +181,8 @@ namespace nn {
 
 				const auto size = sizes[i];
 				auto* l = new layer(size, next_size);
-
+				layers_->push_back(l);
+				
 				for(auto j = 0; j<size; j++)
 				{
 					l->biases[j] = get_random();
@@ -185,19 +191,19 @@ namespace nn {
 						auto w = get_random();
 						l->set_weight(j, k, w);
 					}
-				}							
+				}				
 			}
 		}
 
 		std::vector<double> feed_forward(const std::initializer_list<double>& inputs)
 		{
-			auto* inputLayer = layers_[0];
+			auto* inputLayer = layers_->at(0);
 			std::copy(inputs.begin(), inputs.end(), inputLayer->neurons);
 
-			for (auto i = 1; i < static_cast<int>(layers_.size()); i++)
+			for (auto i = 1; i < static_cast<int>(layers_->size()); i++)
 			{
-				auto* cl = layers_[i - 1];
-				auto* nl = layers_[i];
+				auto* cl = layers_->at(i - 1);
+				auto* nl = layers_->at(i);
 
 				for (int j = 0; j < nl->size; j++)
 				{
@@ -211,23 +217,23 @@ namespace nn {
 				}
 			}
 
-			auto* out_layer = layers_[layers_.size() - 1];
+			auto* out_layer = layers_->at(layers_->size() - 1);
 			
 			return { out_layer->neurons, out_layer->neurons + out_layer->size };
 		}
 
 		void back_propagation(const std::vector<double> &targets)
 		{
-			auto* const out_layer = layers_[layers_.size() - 1];
+			auto* const out_layer = layers_->at(layers_->size() - 1);
 			auto* errors = new double[out_layer->size];
 
 			for (int i = 0; i < out_layer->size; i++)
 				errors[i] = targets[i] - out_layer->neurons[i];
 
-			for (int k = static_cast<int>(layers_.size()) - 2; k >= 0; k--)
+			for (int k = static_cast<int>(layers_->size()) - 2; k >= 0; k--)
 			{
-				auto* cl = layers_[k];
-				auto* nl = layers_[k + 1];
+				auto* cl = layers_->at(k);
+				auto* nl = layers_->at(k + 1);
 
 				auto* errors_next = new double[cl->size];
 				auto* gradient = new double[nl->size];
@@ -276,20 +282,21 @@ namespace nn {
 
 		~neural_network()
 		{
-			for (auto* l : layers_)
+			for (auto* l : *layers_)
 				delete l;
+
+			delete layers_;
 		}
 
-		auto save(std::ostream& os)
+		auto save(std::ostream& os) const
 		{
 			write(os, learning_ratio_);
 			
 			const auto pos = os.tellp();
 
-			const auto len = static_cast<std::uint32_t>(layers_.size());
-			os.write(reinterpret_cast<const char*>(&len), sizeof(len));
+			write(os, static_cast<std::uint32_t>(layers_->size()));			
 
-			for (auto* l : layers_)
+			for (auto* l : *layers_)
 				l->save(os);
 			
 			return static_cast<std::size_t>(os.tellp() - pos);
