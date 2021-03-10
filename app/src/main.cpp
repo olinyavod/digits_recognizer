@@ -1,19 +1,12 @@
 ﻿#include <fstream>
-#include <future>
-#include <SDL.h>
+#include <map>
+#include <filesystem>
+#include <algorithm>
+#include <execution>
 
-#include "../include/neural_network.hpp"
+#include <SDL_image.h>
 
-const int WINDOW_WIDTH = 640;
-const int WINDOW_HEIGHT = 480;
-const int PICTURE_WIDTH = 28;
-const int PICTURE_HEIGHT = 28;
-
-SDL_Renderer* renderer = nullptr;
-SDL_Window* window = nullptr;
-SDL_Texture* texture = nullptr;
-SDL_Point pt_picture_start, pt_picture_end;
-bool is_move = false , is_clear = false, is_pressed = false;
+#include "../include/main.hpp"
 
 void on_loop(long current_tick)
 {
@@ -85,8 +78,7 @@ bool on_event(SDL_Event event)
 			pt_picture_start = pt_picture_end;
 
 		is_move = true;	
-		break;
-		
+		break;		
 	}
 
 	return false;
@@ -94,6 +86,9 @@ bool on_event(SDL_Event event)
 
 bool init()
 {
+	if (!IMG_Init(IMG_INIT_PNG))
+		return false;
+	
 	if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS))
 		return false;
 
@@ -131,32 +126,72 @@ double dsigmoid(double y)
 	return y * (1 - y);
 }
 
+double* load_image(const char* file_name)
+{
+	auto* image = IMG_Load(file_name);
+
+	auto* pixels = static_cast<char*>(image->pixels);
+	const size_t size = image->h * image->w;
+	
+	auto* values = new double[size];
+
+	for (auto i = 0U; i < size; i++)
+	{
+		auto p = pixels[i];
+		auto v = (p & 0xFF) / 255.0;
+		values[i] = v;
+	}
+	SDL_FreeSurface(image);
+	
+	return values;
+}
+
 nn::neural_network* create_digits_nn()
 {
+	std::filesystem::directory_iterator train_directory("../../../../dataset/train");
+
+	std::vector<std::filesystem::path> train_files;
+
+	for(const auto& entry :train_directory)
+	{
+		if(!entry.is_regular_file())
+			continue;
+
+		train_files.push_back(std::filesystem::absolute(entry.path()));
+	}
+	
+	std::vector<digit_sample> samples;
+	
+	std::for_each(train_files.begin(),
+		train_files.end(), [&samples](const auto& p)
+		{
+			std::string std_num = { p.filename().string()[10] };
+
+			auto* image = load_image(p.string().c_str());
+
+			samples.push_back({ atoi(std_num.c_str()), image });
+		});	
+	
 	auto* nn = new nn::neural_network(0.001,
 		&sigmoid,
 		&dsigmoid,
 		{ 784, 512, 128, 32, 10 });
 
-	const char* model_file = "nn_model.dat";
+	const char* model_file = "digits_nn_model.dat";
 
 	std::ofstream os(model_file, std::ios::binary);
 	nn->save(os);
 	os.close();
 
-	delete nn;
-
-	std::ifstream is(model_file, std::ios::binary);
-
-	return nn::neural_network::load(is, &sigmoid, &dsigmoid);
+	return nn;
 }
 
 int main(int argc, char* argv[])
 {
-	auto learn_task = std::async(std::launch::async, create_digits_nn);
-	
 	if (!init())
 		return 1;
+
+	auto learn_task = std::async(std::launch::async, create_digits_nn);
 	
 	auto quit = false;
 	long current_tick = 0;
@@ -195,5 +230,7 @@ int main(int argc, char* argv[])
 	SDL_DestroyRenderer(renderer);
 	SDL_DestroyWindow(window);
 	SDL_Quit();
+	IMG_Quit();
+	
 	return 0;
 }

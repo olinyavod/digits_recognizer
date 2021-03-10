@@ -20,6 +20,11 @@
                     "name": "Catch2_DIR",
                     "value": "C:/Projects/cpp/libs/Catch2",
                     "type": "PATH"
+                },
+                {
+                    "name": "SDL2IMAGE_DIR",
+                    "value": "C:/Projects/cpp/libs/SDL2_image-2.0.5",
+                    "type": "PATH"
                 }
             ]
         }
