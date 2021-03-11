@@ -9,6 +9,7 @@
 struct digit_sample
 {
 	int digit;
+	size_t size;
 	double* data;
 };
 

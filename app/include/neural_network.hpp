@@ -195,7 +195,7 @@ namespace nn {
 			}
 		}
 
-		std::vector<double> feed_forward(const std::initializer_list<double>& inputs)
+		std::vector<double> feed_forward(const std::vector<double>& inputs)
 		{
 			auto* inputLayer = layers_->at(0);
 			std::copy(inputs.begin(), inputs.end(), inputLayer->neurons);
@@ -242,9 +242,12 @@ namespace nn {
 					gradient[i] = errors[i] * derivative_(nl->neurons[i]) * learning_ratio_;
 
 				auto* deltas = new double[nl->size * cl->size];
-				for (auto i = 0; i < nl->size; i++)
-					for (auto j = 0; i < cl->size; j++)
+
+				for (auto i = 0; i < nl->size; i++) {
+					for (auto j = 0; j < cl->size; j++){
 						deltas[i * cl->size + j] = gradient[i] * cl->neurons[j];
+					}
+				}
 
 				for(int i = 0; i<cl->size; i++)
 				{

@@ -126,63 +126,141 @@ double dsigmoid(double y)
 	return y * (1 - y);
 }
 
-double* load_image(const char* file_name)
+double* load_image(const char* file_name, size_t* size)
 {
 	auto* image = IMG_Load(file_name);
 
-	auto* pixels = static_cast<char*>(image->pixels);
-	const size_t size = image->h * image->w;
+	auto* pixels = static_cast<std::uint8_t*>(image->pixels);
+	*size = image->h * image->w;
 	
-	auto* values = new double[size];
+	auto* values = new double[*size];
 
-	for (auto i = 0U; i < size; i++)
+	for (auto i = 0U; i < *size; i++)
 	{
 		auto p = pixels[i];
 		auto v = (p & 0xFF) / 255.0;
 		values[i] = v;
 	}
+	
 	SDL_FreeSurface(image);
 	
 	return values;
 }
 
-nn::neural_network* create_digits_nn()
+std::vector<digit_sample>* load_samples(const char* path)
 {
-	std::filesystem::directory_iterator train_directory("../../../../dataset/train");
+	std::filesystem::directory_iterator train_directory(path);
 
 	std::vector<std::filesystem::path> train_files;
 
-	for(const auto& entry :train_directory)
+	for (const auto& entry : train_directory)
 	{
-		if(!entry.is_regular_file())
+		if (!entry.is_regular_file())
 			continue;
 
 		train_files.push_back(std::filesystem::absolute(entry.path()));
 	}
-	
-	std::vector<digit_sample> samples;
-	
-	std::for_each(train_files.begin(),
-		train_files.end(), [&samples](const auto& p)
+
+	auto* samples = new std::vector<digit_sample>();
+
+	std::mutex m;
+
+	std::for_each(std::execution::par_unseq,
+		train_files.begin(),
+		train_files.end(),
+		[&samples, &m](const auto& p)
 		{
-			std::string std_num = { p.filename().string()[10] };
+			const std::string num = { p.filename().string()[10] };
+			size_t size;
+			auto* image = load_image(p.string().c_str(), &size);
 
-			auto* image = load_image(p.string().c_str());
+			m.lock();
+			samples->push_back({ std::atoi(num.c_str()), size, image });
+			m.unlock();
+		});
 
-			samples.push_back({ atoi(std_num.c_str()), image });
-		});	
+	return samples;
+}
+
+void learn_digits_nn(nn::neural_network* nn, int epochs)
+{
+	auto* samples = load_samples("../../../../dataset/train");
 	
-	auto* nn = new nn::neural_network(0.001,
-		&sigmoid,
-		&dsigmoid,
-		{ 784, 512, 128, 32, 10 });
+	for (auto i = 0u; i < epochs; i++)
+	{
+		int right = 0;
+		double error_sum = 0;
+		int batch_size = 100;
 
+		for (auto j = 0; j < batch_size; j++)
+		{
+			const auto& s = samples->at(rand() % samples->size());
+			const auto targets_size = 10;
+			double targets[targets_size] = { 0.0 };
+			
+			targets[s.digit] = 1.0;
+
+			std::vector<double> inputs(s.data, s.data + s.size);
+			
+			auto outputs = nn->feed_forward(inputs);
+			int max_digit = 0;
+			double max_digit_weight = -1;
+
+			for (int k = 0; k < 10; k++) {
+				if (outputs[k] > max_digit_weight) {
+					max_digit_weight = outputs[k];
+					max_digit = k;
+				}
+			}
+
+			if (s.digit == max_digit) 
+				right++;
+			
+			for (int k = 0; k < 10; k++) {
+				error_sum += (targets[k] - outputs[k]) * (targets[k] - outputs[k]);
+			}
+
+			const std::initializer_list<double> targets_list(targets, targets + targets_size);
+			nn->back_propagation(targets_list);
+		}
+	}
+
+	std::for_each(std::execution::par_unseq,
+		samples->begin(),
+		samples->end(),
+		[](const auto& s)
+		{
+			delete[] s.data;
+		});
+
+	delete samples;
+}
+
+nn::neural_network* create_digits_nn()
+{
+	nn::neural_network* nn = nullptr;	
 	const char* model_file = "digits_nn_model.dat";
 
-	std::ofstream os(model_file, std::ios::binary);
-	nn->save(os);
-	os.close();
+	if (std::filesystem::exists(model_file))
+	{
+		std::ifstream is(model_file, std::ios::binary);
+		nn = nn::neural_network::load(is, &sigmoid, &dsigmoid);
+		is.close();
+	}
+	else 
+	{
+		nn = new nn::neural_network(0.001,
+			&sigmoid,
+			&dsigmoid,
+			{ 784, 512, 128, 32, 10 });
+		
+		learn_digits_nn(nn, 1000);
 
+		std::ofstream os(model_file, std::ios::binary);
+		nn->save(os);
+		os.close();
+	}
+		
 	return nn;
 }
 
