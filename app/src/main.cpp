@@ -3,14 +3,143 @@
 #include <filesystem>
 #include <algorithm>
 #include <execution>
+#include <iomanip>
 
+#include <SDL.h>
 #include <SDL_image.h>
+#include <SDL_ttf.h>
 
 #include "../include/main.hpp"
 
+#include <sstream>
+
+const int OUTPUTS_SIZE = 10;
+
+SDL_Renderer* renderer = nullptr;
+SDL_Window* window = nullptr;
+SDL_Texture* texture = nullptr;
+SDL_Point pt_picture_start, pt_picture_end;
+bool is_move = false, is_clear = false, is_pressed = false;
+long old_tick = 0;
+std::uint8_t loading_alpha = 255;
+std::int8_t loading_alpha_dx = -5;
+nn::neural_network* digits_nn = nullptr;
+
+TTF_Font* normal_font = nullptr;
+TTF_Font* large_font = nullptr;
+
+double actual_outputs[OUTPUTS_SIZE];
+
+app_state current_state;
+
+std::string create_outputs_str()
+{
+	std::stringstream ss;
+
+	int max_digit = 0;
+	double max = actual_outputs[0];
+	for (int i=1; i<OUTPUTS_SIZE; i++)
+	{
+		if (actual_outputs[i] > max)
+		{
+			max = actual_outputs[i];
+			max_digit = i;
+		}
+	}
+
+	ss << "max: " << max_digit << " >> ";
+	
+	for (auto i = 0; i < OUTPUTS_SIZE; i++)
+		ss << i << " = " << std::setprecision(2) << actual_outputs[i] << "; ";
+	
+	return ss.str();
+}
+
+void on_loop_loading(long current_tick)
+{
+	if(current_tick - old_tick < 10)
+		return;
+
+	old_tick = current_tick;
+
+	loading_alpha += loading_alpha_dx;
+
+	if (loading_alpha > 250 || loading_alpha < 20)
+		loading_alpha_dx *= -1;	
+}
+
 void on_loop(long current_tick)
 {
+	switch (current_state)
+	{
+	case loading:
+		on_loop_loading(current_tick);
+		break;
+	}
+}
+
+void on_render_paint()
+{
+	SDL_SetRenderTarget(renderer, texture);
+
+	//TODO: Render to texture
+
+	if (is_clear)
+		SDL_RenderClear(renderer);
+
+	is_clear = false;
+	SDL_SetRenderDrawColor(renderer, 0xFF, 0xFF, 0xFF, 0xFF);
+
+	if (is_move)
+		SDL_RenderDrawLine(renderer,
+			pt_picture_start.x, pt_picture_start.y,
+			pt_picture_end.x, pt_picture_end.y);
+
+	const auto inputs_size = PICTURE_WIDTH * PICTURE_HEIGHT;
+	Uint32 pixels[inputs_size];
+	SDL_RenderReadPixels(renderer, nullptr, 0, pixels, PICTURE_WIDTH*4);
+
+	std::vector<double> inputs(inputs_size);
+	for (auto i = 0; i < inputs_size; i++)
+		inputs[i] = (pixels[i] & 0xFF) / 255.0;
+
+	auto outputs = digits_nn->feed_forward(inputs);
+
+	for (auto i = 0; i < OUTPUTS_SIZE; i++)
+		actual_outputs[i] = outputs[i];
+		
+	SDL_SetRenderTarget(renderer, nullptr);
+
+	SDL_Rect rect = { 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT };
+
+	SDL_RenderCopy(renderer, texture, nullptr, &rect);
+		
+	auto outputs_str = create_outputs_str();
+
+	auto* output_surf = TTF_RenderText_Solid(normal_font, outputs_str.c_str(), { 255, 255, 255 });
+	auto* output_tex = SDL_CreateTextureFromSurface(renderer, output_surf);
+
+	SDL_Rect out_rect = { WINDOW_WIDTH - output_surf->clip_rect.w, 0,  output_surf->clip_rect.w, output_surf->clip_rect.h };
 	
+	SDL_RenderCopy(renderer, output_tex, nullptr, &out_rect);
+	
+	SDL_DestroyTexture(output_tex);
+	SDL_FreeSurface(output_surf);
+}
+
+void on_render_loading()
+{
+	auto* text_surf = TTF_RenderText_Solid(large_font, "Loading...", { 253, 255, 255,  loading_alpha});
+	auto* text_tex = SDL_CreateTextureFromSurface(renderer, text_surf);
+
+	const auto w = text_surf->clip_rect.w;
+	const auto h = text_surf->clip_rect.h;
+	
+	SDL_Rect rect = { (WINDOW_WIDTH - w) / 2, (WINDOW_HEIGHT - h) / 2, w, h };
+	SDL_RenderCopy(renderer, text_tex, nullptr, &rect);
+	
+	SDL_FreeSurface(text_surf);
+	SDL_DestroyTexture(text_tex);
 }
 
 void on_render()
@@ -19,27 +148,21 @@ void on_render()
 
 	SDL_RenderClear(renderer);
 
-	SDL_SetRenderTarget(renderer, texture);
+	switch (current_state)
+	{
+	case start:
+	case loading:
+		on_render_loading();
+		break;
 
-	//TODO: Render to texture
+	case learning:
+		break;
+
+	case paint:
+		on_render_paint();
+		break;
+	}
 	
-	if (is_clear)
-		SDL_RenderClear(renderer);
-
-	is_clear = false;
-	SDL_SetRenderDrawColor(renderer, 0xFF, 0xFF, 0xFF, 0xFF);
-	
-	if (is_move)
-		SDL_RenderDrawLine(renderer,
-			pt_picture_start.x, pt_picture_start.y,
-			pt_picture_end.x, pt_picture_end.y);
-
-	SDL_SetRenderTarget(renderer, nullptr);
-
-	SDL_Rect rect = { 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT };
-
-	SDL_RenderCopy(renderer, texture, nullptr, &rect);
-
 	SDL_RenderPresent(renderer);	
 }
 
@@ -86,6 +209,12 @@ bool on_event(SDL_Event event)
 
 bool init()
 {
+	if (TTF_Init())
+		return false;
+
+	normal_font = TTF_OpenFont("res/OpenSans-Regular.ttf", 12);
+	large_font = TTF_OpenFont("res/OpenSans-Regular.ttf", 24);
+	
 	if (!IMG_Init(IMG_INIT_PNG))
 		return false;
 	
@@ -108,7 +237,7 @@ bool init()
 		return false;
 
 	texture = SDL_CreateTexture(renderer,
-		SDL_PIXELFORMAT_RGBA8888,
+		SDL_PIXELFORMAT_RGB332,
 		SDL_TEXTUREACCESS_TARGET,
 		PICTURE_WIDTH,
 		PICTURE_HEIGHT);
@@ -126,21 +255,28 @@ double dsigmoid(double y)
 	return y * (1 - y);
 }
 
-double* load_image(const char* file_name, size_t* size)
+double* load_inputs_from_surface(SDL_Surface* image, size_t* size)
 {
-	auto* image = IMG_Load(file_name);
-
-	auto* pixels = static_cast<std::uint8_t*>(image->pixels);
 	*size = image->h * image->w;
-	
-	auto* values = new double[*size];
 
+	auto* values = new double[*size];
+	auto* pixels = static_cast<Uint8*>(image->pixels);
+	
 	for (auto i = 0U; i < *size; i++)
 	{
 		auto p = pixels[i];
 		auto v = (p & 0xFF) / 255.0;
 		values[i] = v;
 	}
+
+	return values;
+}
+
+double* load_image(const char* file_name, size_t* size)
+{
+	auto* image = IMG_Load(file_name);
+
+	auto* values = load_inputs_from_surface(image, size);
 	
 	SDL_FreeSurface(image);
 	
@@ -243,12 +379,14 @@ nn::neural_network* create_digits_nn()
 
 	if (std::filesystem::exists(model_file))
 	{
+		current_state = loading;
 		std::ifstream is(model_file, std::ios::binary);
 		nn = nn::neural_network::load(is, &sigmoid, &dsigmoid);
 		is.close();
 	}
 	else 
 	{
+		current_state = learning;
 		nn = new nn::neural_network(0.001,
 			&sigmoid,
 			&dsigmoid,
@@ -273,7 +411,7 @@ int main(int argc, char* argv[])
 	
 	auto quit = false;
 	long current_tick = 0;
-	nn::neural_network* nn = nullptr;
+	
 	while(!quit)
 	{
 		pt_picture_start = pt_picture_end;
@@ -296,19 +434,27 @@ int main(int argc, char* argv[])
 
 		current_tick = SDL_GetTicks();
 
-		if (nn == nullptr && learn_task._Is_ready())
-			nn = learn_task.get();
+		if (digits_nn == nullptr && learn_task._Is_ready())
+		{
+			digits_nn = learn_task.get();
+			current_state = paint;
+		}
 		
 		on_loop(current_tick);
 		on_render();
 	}
 
-	delete nn;
+	delete digits_nn;
 	
 	SDL_DestroyRenderer(renderer);
 	SDL_DestroyWindow(window);
-	SDL_Quit();
+
+	TTF_CloseFont(large_font);
+	TTF_CloseFont(normal_font);
+	TTF_Quit();
+
 	IMG_Quit();
-	
+	SDL_Quit();
+
 	return 0;
 }

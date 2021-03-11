@@ -2,9 +2,15 @@
 
 #include <future>
 
-#include <SDL.h>
-
 #include "neural_network.hpp"
+
+enum app_state
+{
+	start,
+	loading,
+	learning,
+	paint
+};
 
 struct digit_sample
 {
@@ -18,15 +24,11 @@ const int WINDOW_HEIGHT = 480;
 const int PICTURE_WIDTH = 28;
 const int PICTURE_HEIGHT = 28;
 
-SDL_Renderer* renderer = nullptr;
-SDL_Window* window = nullptr;
-SDL_Texture* texture = nullptr;
-SDL_Point pt_picture_start, pt_picture_end;
-bool is_move = false, is_clear = false, is_pressed = false;
-
 
 void on_loop(long current_tick);
 
 void on_render();
 
 bool on_event(SDL_Event event);
+
+double* load_inputs_from_surface(SDL_Surface* image, size_t* size);

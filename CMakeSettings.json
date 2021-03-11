@@ -25,6 +25,11 @@
                     "name": "SDL2IMAGE_DIR",
                     "value": "C:/Projects/cpp/libs/SDL2_image-2.0.5",
                     "type": "PATH"
+                },
+                {
+                    "name": "SDL2TTF_DIR",
+                    "value": "C:/Projects/cpp/libs/SDL2_ttf-2.0.15",
+                    "type": "PATH"
                 }
             ]
         }
